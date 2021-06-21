@@ -8,20 +8,34 @@ pacman::p_load(tidyverse, lubridate, here, sf, mapview)
 # atm
 pacman::p_load_gh("kstierhoff/atm")
 
-# Load backscatter data
+# Load required data -----------------------------------------------------------
+# Load backscatter data (nasc)
+## These are the integrated backscatter for each 100-m transect interval
+## They contain the total CPS backscatter, backscattering coefficients, 
+## and acoustic proportions for each species, which is all that's needed to compute
+## the acoustic biomass point estimate (some might call this the "mean" biomass)
+
 load(here::here("data/nasc_final.Rdata"))
 
-# Load strata.final
-## These are the 
+# Load stratum definitions (strata.final)
+## These are the stratum definitions for each species
+## Most importantly, for each species, it identifies all transects with a given species present
+## and which strata each transect belongs to
 load(here::here("data/strata_info.Rdata"))
 
-# Load strata.primary
-## 
+## View the info for anchovy
+filter(strata.final, scientificName == "Engraulis mordax")
+
+# Load stratum polygons (strata.primary)
+## This is a simple feature object which contains polygons drawn around each stratum
+## for each species, used to compute the area of the stratum
 load(here::here("data/strata_primary_final.Rdata"))
 
-# Load cluster length frequency data
+# View stratum polygons for anchovy; symbolize by the stratum number
+mapview::mapview(filter(strata.primary, scientificName == "Engraulis mordax"),
+                 zcol = "stratum")
 
-# Generate point estimate for anchovy
+# Generate the point estimate for anchovy
 ## i is used to loop through the various species; I set it to anchovy for testing
 i = "Engraulis mordax"
 
@@ -42,5 +56,12 @@ stratum.info <- strata.primary %>%
   st_set_geometry(NULL) 
 
 # Generate point estimate for anchovy
-point.estimate <- data.frame(scientificName = i,
-                             estimate_point(nasc.temp, stratum.info, species = i))
+point.estimate.i <- data.frame(scientificName = i,
+                               estimate_point(nasc.temp, stratum.info, species = i))
+
+# View point estimates
+point.estimate.i
+
+# Challenges
+## 1) For each species, generate the point estimate and combine into one data frame
+## Hint: create a for loop, where i updates for each species

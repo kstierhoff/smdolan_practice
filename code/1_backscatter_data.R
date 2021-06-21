@@ -1,8 +1,8 @@
 # Load required libraries
-library(tidyverse)
+library(tidyverse, here)
 
 # Import acoustic backscatter data
-nasc <- read_csv("data/nasc_2019.csv")
+load(here::here("data/nasc_final.Rdata"))
 
 # Import trawl data
 load("data/trawl_data.Rdata")
