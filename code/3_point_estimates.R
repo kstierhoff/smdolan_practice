@@ -2,7 +2,7 @@
 if (!require("pacman")) install.packages("pacman")
 
 # Install and load required packages from CRAN ---------------------------------
-pacman::p_load(tidyverse, lubridate, here, sf, mapview)
+pacman::p_load(tidyverse, lubridate, here, sf, mapview, tcltk)
 
 # Install and load required packages from Github -------------------------------
 # atm

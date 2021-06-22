@@ -1,15 +1,20 @@
 # Load cluster data (cluster.final) and length frequency table (lf.final) 
-#
 load(here::here("data/cluster_length_frequency_all.Rdata"))
 load(here::here("data/cluster_length_frequency_tables.Rdata"))
+
+# Specify the number of bootstrap samples
+boot.num <- 5
+do.lf    <- TRUE
+
+# Species to generate bootstrap estimates
+bootstrap.est.spp      <- c("Clupea pallasii","Engraulis mordax","Sardinops sagax",
+                            "Scomber japonicus","Trachurus symmetricus")
 
 # Generate multiple bootstrap biomass estimates
 # Create data frame for biomass estimates
 bootstrap.estimates <- data.frame()
 # Create data frame for abundance estimates by length
 abundance.estimates <- data.frame()
-
-library(tcltk)
 
 # Configure progress bar
 pb1 <- tkProgressBar("R Progress Bar", 
@@ -98,14 +103,6 @@ for (i in unique(strata.final$scientificName)) {
   # Update the species counter
   spp.counter     <- spp.counter + 1
 }
+
 # Close the species counter
 close(pb1)
-
-
-# Save bootstrap results
-save(bootstrap.estimates, abundance.estimates, survey.summary, 
-     catch.summary, stratum.summary, bootstrap.comp,
-     file = (here("Output/biomass_bootstrap_est.Rdata")))
-
-# Write bootstrap comparison to CSV
-write_csv(bootstrap.comp, here("Output/bootstrap_comparison.csv"))
