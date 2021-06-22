@@ -67,7 +67,12 @@ point.estimate.i
 ## Hint: create a for loop, where i updates for each species
 
 
-species <- c('Clupea pallasii', 'Engraulis mordax', 'Sardinops sagax', 'Scomber japonicus', 'Trachurus symmetricus') #list of species for loop to run through 
+species <- strata.final %>%
+  select(scientificName)%>%
+  unique()
+
+species <- as.data.frame(t(species))
+
 result <- data.frame() #empty data frame to add info in as the loop is run for each species 
 
 for (i in species){
