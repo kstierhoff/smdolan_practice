@@ -41,7 +41,7 @@ i = "Engraulis mordax"
 
 # Subset strata for species i
 strata.temp <- filter(strata.final, scientificName == i) %>% 
-  select(transect, stratum)
+  select(transect, stratum, scientificName)
 
 # Add stratum numbers to nasc
 nasc.temp <- nasc %>%
@@ -65,3 +65,33 @@ point.estimate.i
 # Challenges
 ## 1) For each species, generate the point estimate and combine into one data frame
 ## Hint: create a for loop, where i updates for each species
+
+
+species <- c('Clupea pallasii', 'Engraulis mordax', 'Sardinops sagax', 'Scomber japonicus', 'Trachurus symmetricus') #list of species for loop to run through 
+result <- data.frame() #empty data frame to add info in as the loop is run for each species 
+
+for (i in species){
+  
+  #select transect and stratum for species i 
+  strata.temp <- filter(strata.final, scientificName == i) %>% 
+    select(transect, stratum)
+  
+  #add strata data to acoustic data for species i 
+  nasc.temp <- nasc %>%
+    left_join(strata.temp) %>% 
+    filter(!is.na(stratum))
+  
+  #create new data frame with area and stratum for species i 
+  stratum.info <- strata.primary %>%
+    filter(scientificName == i) %>%
+    select(stratum, area) %>%
+    mutate(area = as.numeric(area)) %>%
+    st_set_geometry(NULL) 
+  
+  #generate biomass estimate in a new data frame for species i by combining the info from the above tables
+  point.estimate.i <- data.frame(scientificName = i,
+                       estimate_point(nasc.temp, stratum.info, species = i))
+  
+  #put all of the biomass estimates into one data frame for all of the species based on stratum 
+   result <- rbind(result, point.estimate.i)  
+}
