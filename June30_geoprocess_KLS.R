@@ -140,3 +140,63 @@ ggplot() +
 # Save plot as image; open from the Files pane, and try zooming on your viewer to see details better than the Rstudio viewer
 ggsave(filename = "figures/cluster_comparison.png",
        height = 10)
+
+# Try comparison with an equal area projection
+# Reproject (transform) cluster.sf to equal area
+cluster.ea <- st_transform(cluster.sf, crs = 3310)
+nasc.ea <- st_transform(nasc.sf, crs = 3310)
+cluster.hull.ea <- st_transform(cluster.hull, crs = 3310)
+
+# Convert box to a data frame to use with voronoi_polygon
+box.kls.ea <- box2 %>% 
+  # Convert polygon to points
+  st_cast("POINT") %>% 
+  st_transform(crs = 3310) %>% 
+  # Extract lat/long coordinates
+  mutate(X = as.data.frame(st_coordinates(.))$X,
+         Y = as.data.frame(st_coordinates(.))$Y,
+         group = 1) %>%
+  st_set_geometry(NULL)
+
+# Create Voronoi polygons in sf format
+cluster.voronoi.ea <- voronoi_polygon(cluster, x="X", y="Y", outline=box.kls.ea) %>% 
+  as("sf") 
+st_crs(cluster.voronoi.ea) = 3310
+
+ggplot() + 
+  geom_sf(data = cluster.voronoi, aes(fill = factor(cluster)), show.legend = FALSE) + 
+  geom_sf(data = cluster.voronoi.ea, fill = NA, colour = "white") + 
+  geom_sf(data = cluster.hull, fill = NA, linetype = "dashed")
+
+# Do the same using mapview; this time with the projected data
+# A close comparison between the voronoi polygons from equal area data and the convex hull polygons is much more similar, YAY!
+mapview(cluster.voronoi.ea, zcol = "cluster") + 
+  mapview(cluster.hull, color = "white") + 
+  mapview(cluster.sf, size = 1) + 
+  mapview(transects.sf, zcol = NULL)
+
+# Join NASC with cluster.voronoi and cluster.hull
+nasc.comp.ea <- nasc %>% 
+  st_as_sf(coords = c("X", "Y"), crs = 3310) %>% 
+  # Select only the necessary columns
+  select(transect, Interval, cluster_orig = cluster) %>% 
+  # Join cluster number from Voronoi tessellation
+  st_join(select(cluster.voronoi.ea, cluster_voronoi = cluster)) %>% 
+  # Join cluster number from convex hull (original method)
+  st_join(select(cluster.hull.ea, cluster_hull = cluster)) %>%
+  # Subtract original cluster number from new; values != 0 are different
+  mutate(diff_voronoi = cluster_orig - cluster_voronoi,
+         diff_hull    = cluster_orig - cluster_hull)
+
+# Compare differences in cluster assignments on projected data (crs = 3310, CA Albers equal area)
+ggplot() +
+  geom_sf(data = cluster.voronoi.ea, aes(fill = factor(cluster)), show.legend = FALSE) +
+  geom_sf(data = cluster.hull.ea, colour = "white", fill = NA, alpha = 0.5) +
+  geom_sf(data = transects.sf, alpha = 0.5) +
+  geom_sf(data = filter(nasc.comp.ea, diff_voronoi != 0), 
+          aes(colour = diff_voronoi)) + 
+  theme_bw()
+
+# Save plot as image; open from the Files pane, and try zooming on your viewer to see details better than the Rstudio viewer
+ggsave(filename = "figures/cluster_comparison_equal_area.png",
+       height = 10)
