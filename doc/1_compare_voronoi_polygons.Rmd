@@ -1,0 +1,261 @@
+---
+title: "Compare Voronoi Polygons"
+author: "Kevin L. Stierhoff"
+date: "7/6/2021"
+output: html_document
+toc: yes
+---
+
+# Document set-up
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+
+# Load libraries
+library(sf)
+library(ggvoronoi)
+library(ggplot2)
+library(sp)
+library(dplyr)
+library(concaveman)
+library(mapview)
+library(here)
+library(knitr)
+```
+
+# Load data
+
+Load the data from the repository.
+
+```{r load-data}
+load(here::here("data/nasc_final.Rdata"))
+load(here::here("data/catch_info.Rdata"))
+```
+
+# Wrangle data-Initial
+
+Initially, data are converted so simple features (sf), backscatter data are converted to transect lines, and a bounding box is created to constrain the Voronoi polygons.
+
+```{r}
+# Convert NASC to spatial
+nasc.sf <- nasc %>% 
+  # arrange(transect, long) %>% 
+  sf::st_as_sf(coords=c("long", "lat"), crs = 4326)
+
+# Create transect.sf for mapping later
+transects.sf <- nasc.sf %>% 
+  group_by(transect) %>% 
+  summarise(do_union = FALSE) %>% 
+  st_cast("LINESTRING") 
+
+# Bound box based off of min and max values from nasc transect data 
+# TIP: You don't need as.numeric() if you don't quote the values
+box <- data.frame(x=c(-129.25383, -117.27371, -117.27371,-129.2538371),
+                  y=c(50.75796, 50.757960, 32.13575,32.13575),
+                  group=1)
+
+# remove clusters with zero catch 
+# cluster <- as.data.frame(cluster.summ.wt[which(!cluster.summ.wt$cluster %in% cluster.zero$cluster),])
+cluster <- filter(cluster.summ.wt, AllCPS > 0) %>% 
+  as.data.frame()
+
+# Convert to sf for mapview later
+cluster.sf <- st_as_sf(cluster, coords = c("long","lat"), crs = 4326)
+```
+
+## Plot Voronoi polygons-WGS84
+
+Create a plot to visualize the data.
+
+```{r plot-vp-initial, out.width='100%'}
+## convert to spdf  
+cluster.spdf <- voronoi_polygon(cluster, x="long", y="lat", outline=box)
+cluster.df <- fortify_voronoi(cluster.spdf)
+
+# plot spdf in ggplot 
+vp.plot_original <- ggplot()+coord_map()+theme_bw()+
+  geom_path(data = nasc, aes(long, lat))+
+  geom_polygon(data=cluster.spdf,
+               aes(x=long, y=lat, fill=group, group=group),color="black", alpha=0.8)+
+  geom_point(data=cluster, 
+             aes(long, lat))+
+  geom_text(data=cluster, 
+            aes(long, lat, label=cluster), size=3, hjust=-1, vjust=0) +
+  theme(legend.position = "none") # Removed the legend for clarity
+
+ggsave(vp.plot_original, 
+       filename = here::here("figures/voronoi_polygons.png"),
+       height = 10)
+
+knitr::include_graphics(here::here("figures/voronoi_polygons.png"))
+```
+
+## Compare differences-WGS84
+
+Overlay Voronoi polygons with original cluster polygons created by KLS using the `swfscMisc::distance()` function. Intervals where the cluster assignment is different are also plotted. Some profound differences are visible along the boundaries of the polygons. 
+
+```{r}
+# Create more constrained outline using a concave hull polygon with {concaveman}
+box2 <- concaveman(nasc.sf, concavity = 10)
+# Define CRS
+st_crs(box2) = 4326
+
+# Convert to spatial to test the as_Spatial function
+box.sp <- as_Spatial(box2)
+
+# Convert box to a data frame to use with voronoi_polygon
+box.kls <- box2 %>% 
+  # Convert polygon to points
+  st_cast("POINT") %>% 
+  # Extract lat/long coordinates
+  mutate(long = as.data.frame(st_coordinates(.))$X,
+         lat = as.data.frame(st_coordinates(.))$Y,
+         group = 1) %>%
+  st_set_geometry(NULL)
+
+# Create Voronoi polygons in sf format
+cluster.voronoi <- voronoi_polygon(cluster, x="long", y="lat", outline=box.kls) %>% 
+  as("sf") 
+st_crs(cluster.voronoi) = 4326
+
+# Create hulls around positive clusters using KLS's original method
+cluster.hull <- plyr::ddply(nasc, "cluster", atm::find_hull) %>% 
+  select(long, lat, cluster) %>% 
+  st_as_sf(coords = c("long","lat"), crs = 4326) %>% 
+  group_by(cluster) %>% 
+  summarise(do_union = FALSE) %>% 
+  st_cast("POLYGON")
+
+# Join NASC with cluster.voronoi and cluster.hull
+nasc.comp <- nasc %>% 
+  st_as_sf(coords = c("long", "lat"), crs = 4326) %>% 
+  # Select only the necessary columns
+  select(transect, Interval, cluster_orig = cluster) %>% 
+  # Join cluster number from Voronoi tessellation
+  st_join(select(cluster.voronoi, cluster_voronoi = cluster)) %>% 
+  # Join cluster number from convex hull (original method)
+  st_join(select(cluster.hull, cluster_hull = cluster)) %>%
+  # Subtract original cluster number from new; values != 0 are different
+  mutate(diff_voronoi = cluster_orig - cluster_voronoi,
+         diff_hull    = cluster_orig - cluster_hull)
+
+# Compare differences in cluster assignments
+# Differences reflect minor differences near margins
+# Need to try with a different projection (crs = 3310, CA Albers equal area, perhaps) to see if differences persist
+vp.plot1 <- ggplot() +
+  geom_sf(data = cluster.voronoi, aes(fill = factor(cluster)), show.legend = FALSE) +
+  geom_sf(data = cluster.hull, colour = "white", fill = NA, alpha = 0.5) +
+  geom_sf(data = transects.sf, alpha = 0.5) +
+  geom_sf(data = filter(nasc.comp, diff_voronoi != 0), 
+          aes(colour = diff_voronoi)) + 
+  geom_text(data = cluster, 
+            aes(long, lat, label = cluster), size = 3) + 
+  theme_bw() 
+
+# Save plot as image; open from the Files pane, and try zooming on your viewer to see details better than the Rstudio viewer
+ggsave(vp.plot1, 
+       filename = here::here("figures/cluster_comparison.png"),
+       height = 10)
+
+knitr::include_graphics(here::here("figures/cluster_comparison.png"))
+```
+
+# Wrangle data-Equal area projection
+
+I believe the cluster assignments were done using an equal-area projection, which may explain the disparity in results from the two methods. The code below converts the data to CA Albers equal area projection (crs = 3310) and the Voronoi polygons are recreated to compare the results.
+
+```{r}
+# Try comparison with an equal area projection
+# Reproject (transform) cluster.sf to equal area
+cluster.ea <- st_transform(cluster.sf, crs = 3310)
+nasc.ea <- st_transform(nasc.sf, crs = 3310)
+cluster.hull.ea <- st_transform(cluster.hull, crs = 3310)
+
+# Convert box to a data frame to use with voronoi_polygon
+box.kls.ea <- box2 %>% 
+  # Convert polygon to points
+  st_cast("POINT") %>% 
+  st_transform(crs = 3310) %>% 
+  # Extract lat/long coordinates
+  mutate(X = as.data.frame(st_coordinates(.))$X,
+         Y = as.data.frame(st_coordinates(.))$Y,
+         group = 1) %>%
+  st_set_geometry(NULL)
+
+# Create Voronoi polygons in sf format
+cluster.voronoi.ea <- voronoi_polygon(cluster, x="X", y="Y", outline=box.kls.ea) %>% 
+  as("sf") 
+st_crs(cluster.voronoi.ea) = 3310
+```
+
+## Plot Voronoi polygons-Equal area
+### Static plot
+
+Map the polygons created from the projected data.
+
+```{r}
+vp.plot2 <- ggplot() + 
+  geom_sf(data = cluster.voronoi, aes(fill = factor(cluster)), show.legend = FALSE) + 
+  geom_sf(data = cluster.voronoi.ea, fill = NA, colour = "white") + 
+  geom_sf(data = cluster.hull, fill = NA, linetype = "dashed") + 
+  geom_text(data = cluster, 
+            aes(long, lat, label = cluster), size = 3) + 
+  theme_bw()
+
+# Save plot as image; open from the Files pane, and try zooming on your viewer to see details better than the Rstudio viewer
+ggsave(vp.plot2, 
+       filename = here::here("figures/cluster_comparison_ea.png"),
+       height = 10)
+
+knitr::include_graphics(here::here("figures/cluster_comparison_ea.png"))
+```
+
+### Interactive map
+
+The interactive map allow you to zoom-in to compare differences between the two polygon generation methods. 
+
+```{r, out.width='100%'}
+# Do the same using mapview; this time with the projected data
+# A close comparison between the voronoi polygons from equal area data and the convex hull polygons is much more similar, YAY!
+mapview(cluster.voronoi.ea, zcol = "cluster") + 
+  mapview(cluster.hull, color = "white") + 
+  mapview(cluster.sf, size = 1) + 
+  mapview(transects.sf, zcol = NULL)
+```
+
+## Compare differences-Equal area
+
+Overlay Voronoi polygons created on the projected data are overlaid with original cluster polygons. Intervals where the cluster assignment is different are also plotted. (Thankfully) fewer differences are visible along the boundaries of the polygons. 
+
+```{r}
+# Join NASC with cluster.voronoi and cluster.hull
+nasc.comp.ea <- nasc %>% 
+  st_as_sf(coords = c("X", "Y"), crs = 3310) %>% 
+  # Select only the necessary columns
+  select(transect, Interval, cluster_orig = cluster) %>% 
+  # Join cluster number from Voronoi tessellation
+  st_join(select(cluster.voronoi.ea, cluster_voronoi = cluster)) %>% 
+  # Join cluster number from convex hull (original method)
+  st_join(select(cluster.hull.ea, cluster_hull = cluster)) %>%
+  # Subtract original cluster number from new; values != 0 are different
+  mutate(diff_voronoi = cluster_orig - cluster_voronoi,
+         diff_hull    = cluster_orig - cluster_hull)
+
+# Compare differences in cluster assignments on projected data (crs = 3310, CA Albers equal area)
+vp.plot3 <- ggplot() +
+  geom_sf(data = cluster.voronoi.ea, aes(fill = factor(cluster)), show.legend = FALSE) +
+  geom_sf(data = cluster.hull.ea, colour = "white", fill = NA, alpha = 0.5) +
+  geom_sf(data = transects.sf, alpha = 0.5) +
+  geom_sf(data = filter(nasc.comp.ea, diff_voronoi != 0), 
+          aes(colour = diff_voronoi)) + 
+  theme_bw()
+
+# Save plot as image; open from the Files pane, and try zooming on your viewer to see details better than the Rstudio viewer
+ggsave(vp.plot3, 
+       filename = here::here("figures/cluster_comparison_equal_area.png"),
+       height = 10)
+
+knitr::include_graphics(here::here("figures/cluster_comparison_equal_area.png"))
+```
+
+
