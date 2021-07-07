@@ -12,7 +12,7 @@ output:
 
 ```{r setup, include=FALSE}
 # Set to false after first run to speed knitting
-save.figures <- FALSE
+save.figures <- TRUE
 
 # Chunk options
 knitr::opts_chunk$set(echo = TRUE, message = FALSE)
