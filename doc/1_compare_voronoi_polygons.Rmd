@@ -2,13 +2,19 @@
 title: "Compare Voronoi Polygons"
 author: "Kevin L. Stierhoff"
 date: "7/6/2021"
-output: html_document
-toc: yes
+output:
+  html_document:
+    toc: true
+    toc_float: true
 ---
 
 # Document set-up
 
 ```{r setup, include=FALSE}
+# Set to false after first run to speed knitting
+save.figures <- FALSE
+
+# Chunk options
 knitr::opts_chunk$set(echo = TRUE, message = FALSE)
 
 # Load libraries
@@ -21,6 +27,7 @@ library(concaveman)
 library(mapview)
 library(here)
 library(knitr)
+library(atm)
 ```
 
 # Load data
@@ -60,7 +67,8 @@ cluster <- filter(cluster.summ.wt, AllCPS > 0) %>%
   as.data.frame()
 
 # Convert to sf for mapview later
-cluster.sf <- st_as_sf(cluster, coords = c("long","lat"), crs = 4326)
+cluster.sf <- st_as_sf(cluster, coords = c("long","lat"), crs = 4326) %>% 
+  mutate(id = seq(1, nrow(.)))
 ```
 
 ## Plot Voronoi polygons-WGS84
@@ -83,9 +91,11 @@ vp.plot_original <- ggplot()+coord_map()+theme_bw()+
             aes(long, lat, label=cluster), size=3, hjust=-1, vjust=0) +
   theme(legend.position = "none") # Removed the legend for clarity
 
-ggsave(vp.plot_original, 
-       filename = here::here("figures/voronoi_polygons.png"),
-       height = 10)
+if (save.figures) {
+  ggsave(vp.plot_original, 
+         filename = here::here("figures/voronoi_polygons.png"),
+         height = 10)
+}
 
 knitr::include_graphics(here::here("figures/voronoi_polygons.png"))
 ```
@@ -96,12 +106,13 @@ Overlay Voronoi polygons with original cluster polygons created by KLS using the
 
 ```{r}
 # Create more constrained outline using a concave hull polygon with {concaveman}
-box2 <- concaveman(nasc.sf, concavity = 10)
+box2 <- concaveman(nasc.sf, concavity = 30) %>% 
+  st_buffer(dist = 60)
 # Define CRS
 st_crs(box2) = 4326
 
 # Convert to spatial to test the as_Spatial function
-box.sp <- as_Spatial(box2)
+box.sp <- as_Spatial(box2) 
 
 # Convert box to a data frame to use with voronoi_polygon
 box.kls <- box2 %>% 
@@ -139,6 +150,11 @@ nasc.comp <- nasc %>%
   mutate(diff_voronoi = cluster_orig - cluster_voronoi,
          diff_hull    = cluster_orig - cluster_hull)
 
+# ggplot() + 
+#   geom_sf(data = nasc.comp, aes(colour = factor(cluster_voronoi)), show.legend = FALSE) +
+#   geom_sf(data = cluster.voronoi, fill = NA) + 
+#   geom_sf_text(data = cluster.sf, aes(label = cluster))
+
 # Compare differences in cluster assignments
 # Differences reflect minor differences near margins
 # Need to try with a different projection (crs = 3310, CA Albers equal area, perhaps) to see if differences persist
@@ -153,9 +169,11 @@ vp.plot1 <- ggplot() +
   theme_bw() 
 
 # Save plot as image; open from the Files pane, and try zooming on your viewer to see details better than the Rstudio viewer
-ggsave(vp.plot1, 
-       filename = here::here("figures/cluster_comparison.png"),
-       height = 10)
+if (save.figures) {
+  ggsave(vp.plot1, 
+         filename = here::here("figures/cluster_comparison.png"),
+         height = 10)  
+}
 
 knitr::include_graphics(here::here("figures/cluster_comparison.png"))
 ```
@@ -184,7 +202,8 @@ box.kls.ea <- box2 %>%
 
 # Create Voronoi polygons in sf format
 cluster.voronoi.ea <- voronoi_polygon(cluster, x="X", y="Y", outline=box.kls.ea) %>% 
-  as("sf") 
+  as("sf") %>% 
+  mutate(id = seq(1, nrow(.)))
 st_crs(cluster.voronoi.ea) = 3310
 ```
 
@@ -203,9 +222,11 @@ vp.plot2 <- ggplot() +
   theme_bw()
 
 # Save plot as image; open from the Files pane, and try zooming on your viewer to see details better than the Rstudio viewer
-ggsave(vp.plot2, 
-       filename = here::here("figures/cluster_comparison_ea.png"),
-       height = 10)
+if (save.figures) {
+  ggsave(vp.plot2, 
+         filename = here::here("figures/cluster_comparison_ea.png"),
+         height = 10)  
+}
 
 knitr::include_graphics(here::here("figures/cluster_comparison_ea.png"))
 ```
@@ -234,7 +255,7 @@ nasc.comp.ea <- nasc %>%
   # Select only the necessary columns
   select(transect, Interval, cluster_orig = cluster) %>% 
   # Join cluster number from Voronoi tessellation
-  st_join(select(cluster.voronoi.ea, cluster_voronoi = cluster)) %>% 
+  st_join(select(cluster.voronoi.ea, cluster_voronoi = cluster, id)) %>% 
   # Join cluster number from convex hull (original method)
   st_join(select(cluster.hull.ea, cluster_hull = cluster)) %>%
   # Subtract original cluster number from new; values != 0 are different
@@ -251,11 +272,49 @@ vp.plot3 <- ggplot() +
   theme_bw()
 
 # Save plot as image; open from the Files pane, and try zooming on your viewer to see details better than the Rstudio viewer
-ggsave(vp.plot3, 
-       filename = here::here("figures/cluster_comparison_equal_area.png"),
-       height = 10)
+if (save.figures) {
+  ggsave(vp.plot3, 
+         filename = here::here("figures/cluster_comparison_equal_area.png"),
+         height = 10)
+  
+}
 
 knitr::include_graphics(here::here("figures/cluster_comparison_equal_area.png"))
 ```
+# Compute cluster distances
+## Identify nearest feature and compute distance
 
+A more streamlined approach to cluster assignment is illustrated here. First, `sf::st_nearest_feature` is used to get the index of the nearest trawl cluster. Next, `sf::st_distance` is used to compute the element-wise distance to the nearest cluster. This achieves the same result while avoiding the creation of line segments, etc., which greatly increased the amount of time required to do the geoprocessing.
 
+```{r}
+# See example here:
+# https://r-spatial.github.io/sf/reference/st_nearest_feature.html
+nearest.cluster <- st_nearest_feature(nasc.ea, cluster.ea)
+
+nasc.ea <- nasc.ea %>% 
+  mutate(cluster_nearest = cluster.ea$cluster[nearest.cluster],
+         distance_m   = as.numeric(st_distance(., cluster.ea[nearest.cluster,], by_element=TRUE)),
+         distance_nmi = distance_m * 0.000539957,
+         clust.diff = cluster - cluster_nearest)
+
+# Summarize points by nearest cluster and generate convex hull polygons
+hull_st <- nasc.ea %>% 
+  group_by(cluster_nearest) %>%
+  summarise() %>% 
+  st_convex_hull()
+
+# Create final plot
+dist.plot.final <- ggplot() + 
+  geom_sf(data = nasc.ea, 
+          aes(colour = factor(cluster_nearest)),
+          show.legend = FALSE) +
+  geom_sf(data = hull_st, fill = NA)
+
+if (save.figures) {
+  ggsave(dist.plot.final,
+         filename = here::here("figures/cluster_assignment_final.png"),
+         height = 10)  
+}
+
+include_graphics(here::here("figures/cluster_assignment_final.png"))
+```
